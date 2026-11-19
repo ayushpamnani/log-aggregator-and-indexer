@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOG AGGREGATOR &amp; INDEXER</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════
+   DESIGN TOKENS
+═══════════════════════════════════════════════ */
+:root {
+  --bg:       #0d1117;
+  --bg2:      #161b22;
+  --bg3:      #1c2230;
+  --bg4:      #21262d;
+  --border:   #30363d;
+  --border2:  #3d444d;
+  --text:     #e6edf3;
+  --text2:    #8b949e;
+  --text3:    #6e7681;
+  --accent:   #58a6ff;
+  --accent2:  #388bfd;
+  --success:  #3fb950;
+  --warning:  #d29922;
+  --danger:   #f85149;
+  --fatal:    #bc8cff;
+  --info:     #58a6ff;
+  --debug:    #6e7681;
+  --warn-col: #d29922;
+  --radius:   8px;
+  --radius2:  12px;
+  --shadow:   0 4px 24px rgba(0,0,0,0.4);
+}
+
+/* ═══════════════════════════════════════════════
+   RESET & BASE
+═══════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font:14px/1.5 'Inter',system-ui,-apple-system,sans-serif;min-height:100vh;overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}
+button{cursor:pointer;font:inherit}
+input,select,button{color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ═══════════════════════════════════════════════
+   SCROLLBARS
+═══════════════════════════════════════════════ */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#484f58}
+
+/* ═══════════════════════════════════════════════
+   NAVBAR
+═══════════════════════════════════════════════ */
+.navbar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:0 20px;height:56px;
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:200;
+  box-shadow:0 1px 0 var(--border);
+}
+.nav-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.nav-logo{font-size:20px}
+.nav-title{font-size:15px;font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.nav-title span{color:var(--accent)}
+.nav-sep{flex:1}
+
+/* Status badge */
+.status-badge{
+  display:flex;align-items:center;gap:6px;
+  padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;
+  border:1px solid;white-space:nowrap;
+}
+.status-badge.ok{background:#0d2117;color:var(--success);border-color:#1f5c33}
+.status-badge.err{background:#2d1115;color:var(--danger);border-color:#6e1b1b}
+.status-pulse{width:7px;height:7px;border-radius:50%;background:currentColor}
+.status-badge.ok .status-pulse{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Search bar */
+.nav-search{
+  display:flex;align-items:center;gap:0;flex:1;min-width:220px;max-width:480px;
+}
+.nav-search input{
+  flex:1;background:var(--bg3);border:1px solid var(--border2);
+  border-right:none;border-radius:var(--radius) 0 0 var(--radius);
+  padding:7px 12px;font-size:13px;color:var(--text);
+  transition:border-color .2s;
+}
+.nav-search input:focus{border-color:var(--accent);outline:none}
+.nav-search input::placeholder{color:var(--text3)}
+.nav-search button{
+  background:var(--accent2);border:1px solid var(--accent2);
+  border-radius:0 var(--radius) var(--radius) 0;
+  padding:7px 14px;font-size:13px;font-weight:600;
+  transition:background .2s;white-space:nowrap;
+}
+.nav-search button:hover{background:var(--accent)}
+
+/* Nav controls */
+.nav-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nav-select{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);
+  padding:6px 10px;font-size:12px;color:var(--text);cursor:pointer;
+}
+.nav-btn{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);
+  padding:6px 12px;font-size:12px;color:var(--text2);
+  transition:all .2s;display:flex;align-items:center;gap:5px;
+}
+.nav-btn:hover{border-color:var(--accent);color:var(--accent)}
+.nav-btn.active{background:var(--bg4);border-color:var(--border2);color:var(--text)}
+.auto-badge{
+  background:#1b3a5c;color:var(--accent);border:1px solid #264d80;
+  border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;
+}
+
+/* ═══════════════════════════════════════════════
+   MAIN LAYOUT
+═══════════════════════════════════════════════ */
+.main{padding:20px;display:flex;flex-direction:column;gap:20px;max-width:1800px;margin:0 auto}
+
+/* ═══════════════════════════════════════════════
+   STAT CARDS
+═══════════════════════════════════════════════ */
+.cards-row{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+@media(max-width:1200px){.cards-row{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:700px){.cards-row{grid-template-columns:repeat(2,1fr)}}
+
+.stat-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);
+  padding:18px;position:relative;overflow:hidden;
+  transition:border-color .2s,transform .2s;cursor:default;
+}
+.stat-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+}
+.stat-card.total::before{background:var(--accent)}
+.stat-card.error::before{background:var(--danger)}
+.stat-card.warn::before{background:var(--warning)}
+.stat-card.info::before{background:var(--success)}
+.stat-card.indexed::before{background:var(--fatal)}
+.stat-card.speed::before{background:#f0883e}
+.stat-card:hover{border-color:var(--border2);transform:translateY(-2px)}
+
+.card-icon{font-size:22px;margin-bottom:8px}
+.card-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:6px}
+.card-value{font-size:28px;font-weight:700;line-height:1}
+.card-sub{font-size:11px;color:var(--text3);margin-top:5px}
+.card-value.c-total{color:var(--text)}
+.card-value.c-error{color:var(--danger)}
+.card-value.c-warn{color:var(--warning)}
+.card-value.c-info{color:var(--success)}
+.card-value.c-indexed{color:var(--fatal)}
+.card-value.c-speed{color:#f0883e}
+
+/* ═══════════════════════════════════════════════
+   CHART GRID
+═══════════════════════════════════════════════ */
+.charts-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+@media(max-width:1000px){.charts-grid{grid-template-columns:1fr}}
+
+.charts-col-right{display:flex;flex-direction:column;gap:16px}
+
+/* ═══════════════════════════════════════════════
+   PANELS / CARDS
+═══════════════════════════════════════════════ */
+.panel{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);
+  overflow:hidden;
+}
+.panel-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);
+}
+.panel-title{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px}
+.panel-title .icon{font-size:16px}
+.panel-badge{
+  font-size:11px;background:var(--bg3);border:1px solid var(--border);
+  border-radius:20px;padding:2px 9px;color:var(--text2);
+}
+.panel-body{padding:16px}
+
+/* ═══════════════════════════════════════════════
+   CHART CONTAINERS
+═══════════════════════════════════════════════ */
+.chart-wrap{padding:16px;position:relative}
+.chart-wrap canvas{max-height:220px}
+.chart-wrap-sm canvas{max-height:180px}
+.chart-loading{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:var(--bg2);opacity:.9;color:var(--text3);font-size:13px;
+  border-radius:var(--radius2);
+}
+
+/* ═══════════════════════════════════════════════
+   SERVICES PANEL (bar chart section)
+═══════════════════════════════════════════════ */
+.charts-bottom{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.charts-bottom{grid-template-columns:1fr}}
+
+/* ═══════════════════════════════════════════════
+   LOG EXPLORER
+═══════════════════════════════════════════════ */
+.explorer-toolbar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:12px 18px;border-bottom:1px solid var(--border);background:var(--bg3);
+}
+.filter-group{display:flex;align-items:center;gap:6px}
+.filter-label{font-size:11px;color:var(--text3);white-space:nowrap}
+.filter-select{
+  background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  padding:5px 8px;font-size:12px;color:var(--text);cursor:pointer;
+  transition:border-color .2s;
+}
+.filter-select:focus{border-color:var(--accent);outline:none}
+
+.sort-btn{
+  background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+  padding:5px 10px;font-size:12px;color:var(--text2);
+  transition:all .2s;
+}
+.sort-btn:hover,.sort-btn.active{border-color:var(--accent);color:var(--accent)}
+
+/* Log table */
+.log-table-wrap{overflow-x:auto}
+.log-table{width:100%;border-collapse:collapse;font-size:13px}
+.log-table th{
+  text-align:left;padding:9px 12px;
+  font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);
+  background:var(--bg3);border-bottom:1px solid var(--border);
+  font-weight:600;white-space:nowrap;position:sticky;top:0;z-index:1;
+}
+.log-row{border-bottom:1px solid var(--border);transition:background .1s;cursor:pointer}
+.log-row:hover{background:var(--bg3)}
+.log-row.expanded{background:var(--bg3)}
+.log-cell{padding:8px 12px;vertical-align:middle}
+.log-cell.ts{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--text3);white-space:nowrap}
+.log-cell.svc{font-size:12px;color:var(--accent);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.log-cell.host{font-size:12px;color:var(--text3);white-space:nowrap}
+.log-cell.msg{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-word;max-width:0;min-width:200px}
+.log-cell.expand-btn{text-align:center;width:32px;color:var(--text3);font-size:11px}
+
+/* Level pills */
+.level-pill{
+  display:inline-block;padding:2px 7px;border-radius:4px;
+  font-size:10px;font-weight:700;letter-spacing:.06em;white-space:nowrap;
+  border:1px solid;
+}
+.level-DEBUG{background:#1c2230;color:var(--debug);border-color:#2c3341}
+.level-INFO{background:#0d2137;color:var(--info);border-color:#1b4080}
+.level-WARN{background:#271d08;color:var(--warn-col);border-color:#5c3d08}
+.level-ERROR{background:#2d1115;color:var(--danger);border-color:#6e1b1b}
+.level-FATAL{background:#1f1030;color:var(--fatal);border-color:#4a2a7a}
+
+/* Expanded detail row */
+.detail-row{background:#0d1117}
+.detail-cell{padding:0!important}
+.detail-inner{
+  padding:14px 20px;border-bottom:1px solid var(--border);
+  display:grid;grid-template-columns:120px 1fr;gap:8px;
+}
+.detail-key{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;padding-top:2px}
+.detail-val{font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--text);word-break:break-all}
+.detail-json{
+  background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:10px 12px;color:var(--accent);white-space:pre-wrap;font-size:12px;
+}
+
+/* Empty & loading states */
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:48px 20px;gap:10px;color:var(--text3);
+}
+.empty-icon{font-size:40px;opacity:.4}
+.empty-title{font-size:14px;font-weight:600;color:var(--text2)}
+.empty-sub{font-size:12px;text-align:center}
+
+.loading-state{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  padding:40px;color:var(--text3);font-size:13px;
+}
+.spinner{
+  width:18px;height:18px;border:2px solid var(--border2);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Pagination */
+.pagination{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px;border-top:1px solid var(--border);
+  background:var(--bg3);
+}
+.page-info{font-size:12px;color:var(--text2)}
+.page-controls{display:flex;gap:6px}
+.page-btn{
+  background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  padding:5px 12px;font-size:12px;color:var(--text2);
+  transition:all .15s;
+}
+.page-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.page-btn:disabled{opacity:.35;cursor:not-allowed}
+
+/* ═══════════════════════════════════════════════
+   RECENT ERRORS + TOP SERVICES PANELS
+═══════════════════════════════════════════════ */
+.error-item{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 0;border-bottom:1px solid var(--border);
+}
+.error-item:last-child{border-bottom:none}
+.error-dot{width:6px;height:6px;border-radius:50%;background:var(--danger);flex-shrink:0;margin-top:5px}
+.error-msg{font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--text);line-height:1.4;word-break:break-word}
+.error-meta{font-size:11px;color:var(--text3);margin-top:3px;white-space:nowrap}
+
+.svc-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.svc-row:last-child{border-bottom:none}
+.svc-name{font-size:12px;color:var(--accent);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svc-bar-wrap{flex:2;background:var(--bg3);border-radius:4px;height:6px;overflow:hidden}
+.svc-bar{height:100%;border-radius:4px;background:var(--accent2);transition:width .5s ease}
+.svc-count{font-size:12px;color:var(--text2);min-width:40px;text-align:right}
+
+/* ═══════════════════════════════════════════════
+   QUERY HINTS
+═══════════════════════════════════════════════ */
+.hints{
+  display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;
+  border-bottom:1px solid var(--border);background:var(--bg);
+}
+.hint-label{font-size:11px;color:var(--text3);align-self:center}
+.hint-chip{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:5px;
+  padding:3px 9px;font-size:11px;color:var(--text2);cursor:pointer;
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+  transition:all .15s;
+}
+.hint-chip:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ═══════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+═══════════════════════════════════════════════ */
+#toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:10px 16px;font-size:13px;color:var(--text);
+  box-shadow:var(--shadow);min-width:200px;
+  animation:slideInRight .25s ease;
+}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error{border-left:3px solid var(--danger)}
+@keyframes slideInRight{from{transform:translateX(100%);opacity:0}to{transform:none;opacity:1}}
+
+/* ═══════════════════════════════════════════════
+   RESPONSIVE
+═══════════════════════════════════════════════ */
+@media(max-width:760px){
+  .navbar{padding:0 12px;gap:8px;height:auto;padding-top:8px;padding-bottom:8px}
+  .nav-sep{display:none}
+  .main{padding:12px;gap:14px}
+  .cards-row{grid-template-columns:repeat(2,1fr);gap:10px}
+  .charts-grid,.charts-bottom{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ NAVBAR ═══ -->
+<nav class="navbar">
+  <div class="nav-brand">
+    <span class="nav-logo">📋</span>
+    <div class="nav-title">LOG <span>AGGREGATOR</span> &amp; INDEXER</div>
+  </div>
+
+  <div class="nav-search">
+    <input id="q" type="search" placeholder='e.g.  timeout  level:error  "connection refused"  pay*  -healthcheck' aria-label="Search query">
+    <button onclick="runSearch()">Search</button>
+  </div>
+
+  <div class="nav-sep"></div>
+
+  <div class="nav-controls">
+    <div id="status-badge" class="status-badge ok">
+      <span class="status-pulse"></span>
+      <span id="status-text">Connected</span>
+    </div>
+
+    <select id="range" class="nav-select" aria-label="Time range" onchange="onRangeChange()">
+      <option value="900">Last 15 min</option>
+      <option value="3600" selected>Last 1 hour</option>
+      <option value="21600">Last 6 hours</option>
+      <option value="86400">Last 24 hours</option>
+      <option value="604800">Last 7 days</option>
+      <option value="0">All time</option>
+    </select>
+
+    <select id="sort" class="nav-select" aria-label="Sort order">
+      <option value="time">Newest first</option>
+      <option value="relevance">Most relevant</option>
+    </select>
+
+    <button id="auto-btn" class="nav-btn" onclick="toggleAuto()">
+      <span>⟳</span> Auto
+      <span id="auto-badge" class="auto-badge" style="display:none">ON</span>
+    </button>
+
+    <button class="nav-btn" onclick="refresh()" title="Refresh now">↻ Refresh</button>
+  </div>
+</nav>
+
+<!-- ═══ MAIN ═══ -->
+<div class="main">
+
+  <!-- STAT CARDS -->
+  <div class="cards-row">
+    <div class="stat-card total">
+      <div class="card-icon">📊</div>
+      <div class="card-label">Total Logs</div>
+      <div class="card-value c-total" id="c-total">—</div>
+      <div class="card-sub" id="c-total-sub">loading…</div>
+    </div>
+    <div class="stat-card error">
+      <div class="card-icon">🔴</div>
+      <div class="card-label">Errors</div>
+      <div class="card-value c-error" id="c-error">—</div>
+      <div class="card-sub" id="c-error-sub">in current results</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="card-icon">🟡</div>
+      <div class="card-label">Warnings</div>
+      <div class="card-value c-warn" id="c-warn">—</div>
+      <div class="card-sub" id="c-warn-sub">in current results</div>
+    </div>
+    <div class="stat-card info">
+      <div class="card-icon">🟢</div>
+      <div class="card-label">Info Logs</div>
+      <div class="card-value c-info" id="c-info">—</div>
+      <div class="card-sub" id="c-info-sub">in current results</div>
+    </div>
+    <div class="stat-card indexed">
+      <div class="card-icon">🗂️</div>
+      <div class="card-label">Indexed</div>
+      <div class="card-value c-indexed" id="c-indexed">—</div>
+      <div class="card-sub" id="c-indexed-sub">total in store</div>
+    </div>
+    <div class="stat-card speed">
+      <div class="card-icon">⚡</div>
+      <div class="card-label">Search Time</div>
+      <div class="card-value c-speed" id="c-speed">—</div>
+      <div class="card-sub" id="c-speed-sub">last query</div>
+    </div>
+  </div>
+
+  <!-- CHARTS ROW 1: Time series + Doughnut -->
+  <div class="charts-grid">
+    <!-- Logs over time (line chart) -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="icon">📈</span> Logs Over Time</div>
+        <div id="ts-badge" class="panel-badge">loading…</div>
+      </div>
+      <div class="chart-wrap" style="position:relative">
+        <canvas id="chart-ts"></canvas>
+        <div class="chart-loading" id="ts-loading">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Right column: doughnut + recent errors -->
+    <div class="charts-col-right">
+      <!-- Severity doughnut -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="icon">🍩</span> Log Levels</div>
+          <div id="donut-badge" class="panel-badge">—</div>
+        </div>
+        <div class="chart-wrap chart-wrap-sm" style="position:relative">
+          <canvas id="chart-donut"></canvas>
+          <div class="chart-loading" id="donut-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHARTS ROW 2: Bar charts -->
+  <div class="charts-bottom">
+    <!-- Logs by service (bar) -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="icon">🏗️</span> Logs by Service</div>
+        <div id="svc-badge" class="panel-badge">—</div>
+      </div>
+      <div class="chart-wrap" style="position:relative">
+        <canvas id="chart-svc"></canvas>
+        <div class="chart-loading" id="svc-loading">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Error & Warning trends -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="icon">🚨</span> Error &amp; Warning Trend</div>
+        <div id="trend-badge" class="panel-badge">—</div>
+      </div>
+      <div class="chart-wrap" style="position:relative">
+        <canvas id="chart-trend"></canvas>
+        <div class="chart-loading" id="trend-loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: Recent errors + Top services -->
+  <div class="charts-bottom">
+    <!-- Recent errors -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="icon">🚫</span> Recent Errors</div>
+        <div id="errors-badge" class="panel-badge">0</div>
+      </div>
+      <div class="panel-body" id="recent-errors-body">
+        <div class="loading-state"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <!-- Top services -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="icon">📡</span> Most Active Services</div>
+      </div>
+      <div class="panel-body" id="top-services-body">
+        <div class="loading-state"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOG EXPLORER -->
+  <div class="panel" id="explorer-panel">
+    <div class="panel-header">
+      <div class="panel-title"><span class="icon">🔍</span> Log Explorer</div>
+      <div id="explorer-badge" class="panel-badge">loading…</div>
+    </div>
+
+    <!-- Query hints -->
+    <div class="hints">
+      <span class="hint-label">Quick filters:</span>
+      <span class="hint-chip" onclick="setQ('level:error')">level:error</span>
+      <span class="hint-chip" onclick="setQ('level:warn')">level:warn</span>
+      <span class="hint-chip" onclick="setQ('level:debug')">level:debug</span>
+      <span class="hint-chip" onclick="setQ('service:auth-service')">auth-service</span>
+      <span class="hint-chip" onclick="setQ('service:payment-service')">payment-service</span>
+      <span class="hint-chip" onclick="setQ('\"connection refused\"')">"connection refused"</span>
+      <span class="hint-chip" onclick="setQ('time*')">time*</span>
+      <span class="hint-chip" onclick="setQ('-healthcheck')">-healthcheck</span>
+      <span class="hint-chip" onclick="setQ('')">Clear filter</span>
+    </div>
+
+    <!-- Toolbar: level/service filter + sort -->
+    <div class="explorer-toolbar">
+      <div class="filter-group">
+        <span class="filter-label">Level</span>
+        <select id="f-level" class="filter-select" onchange="applyFilter()">
+          <option value="">All</option>
+          <option value="level:debug">DEBUG</option>
+          <option value="level:info">INFO</option>
+          <option value="level:warn">WARN</option>
+          <option value="level:error">ERROR</option>
+          <option value="level:fatal">FATAL</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Service</span>
+        <select id="f-service" class="filter-select" onchange="applyFilter()">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="filter-group" style="margin-left:auto">
+        <span class="filter-label">Per page</span>
+        <select id="per-page" class="filter-select" onchange="goPage(1)">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Log table -->
+    <div class="log-table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th style="width:160px">Timestamp</th>
+            <th style="width:70px">Level</th>
+            <th style="width:150px">Service</th>
+            <th style="width:90px">Host</th>
+            <th>Message</th>
+            <th style="width:32px"></th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination">
+      <div class="page-info" id="page-info">—</div>
+      <div class="page-controls">
+        <button class="page-btn" id="btn-prev" onclick="goPage(curPage-1)" disabled>← Prev</button>
+        <button class="page-btn" id="btn-next" onclick="goPage(curPage+1)" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+/* ═══════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════ */
+let curPage = 1;
+let curTotal = 0;
+let autoRefresh = false;
+let autoTimer = null;
+let lastQuery = '';
+let lastFacets = {};
+let chartTS = null, chartDonut = null, chartSvc = null, chartTrend = null;
+const expandedRows = new Set();
+
+/* ═══════════════════════════════════════════════
+   UTILS
+═══════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => Number.isFinite(n) ? n.toLocaleString() : '—';
+const fmtMs = ms => ms < 1 ? '<1ms' : ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(1)}s`;
+function fmtTs(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleString('en-GB',{hour12:false,year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',second:'2-digit'}).replace(',','');
+}
+function getRange() {
+  const v = +$('range').value;
+  return v ? Date.now()/1000 - v : null;
+}
+
+/* ═══════════════════════════════════════════════
+   TOAST
+═══════════════════════════════════════════════ */
+function toast(msg, type='success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  $('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+/* ═══════════════════════════════════════════════
+   CHART.JS DEFAULTS
+═══════════════════════════════════════════════ */
+Chart.defaults.color = '#8b949e';
+Chart.defaults.font.family = "Inter, system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+const GRID_COLOR = '#21262d';
+const LEVEL_COLORS = {
+  DEBUG: '#6e7681', INFO: '#58a6ff', WARN: '#d29922', ERROR: '#f85149', FATAL: '#bc8cff'
+};
+
+function mkLineOptions(yLabel) {
+  return {
+    responsive:true, maintainAspectRatio:true, interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{boxWidth:10,padding:14}},tooltip:{backgroundColor:'#1c2230',borderColor:'#30363d',borderWidth:1,
+      titleColor:'#e6edf3',bodyColor:'#8b949e',padding:10}},
+    scales:{
+      x:{grid:{color:GRID_COLOR},ticks:{maxTicksLimit:8,maxRotation:0}},
+      y:{grid:{color:GRID_COLOR},title:{display:!!yLabel,text:yLabel,color:'#6e7681'},min:0,ticks:{precision:0}}
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════════
+   HEALTH CHECK
+═══════════════════════════════════════════════ */
+async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    const ok = r.ok;
+    $('status-badge').className = `status-badge ${ok ? 'ok' : 'err'}`;
+    $('status-text').textContent = ok ? 'Connected' : 'Degraded';
+  } catch {
+    $('status-badge').className = 'status-badge err';
+    $('status-text').textContent = 'Disconnected';
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   STATS CARDS (from /stats endpoint)
+═══════════════════════════════════════════════ */
+async function loadStats() {
+  try {
+    const r = await fetch('/stats');
+    if (!r.ok) return;
+    const s = await r.json();
+    const total = s.documents.total_indexed;
+    $('c-indexed').textContent = fmt(total);
+    $('c-indexed-sub').textContent = `${fmt(s.documents.in_memtable)} in memtable · ${s.segments.length} segment(s)`;
+  } catch {}
+}
+
+/* ═══════════════════════════════════════════════
+   TIMESERIES CHART (from /timeseries)
+═══════════════════════════════════════════════ */
+async function loadTimeseries() {
+  const from = getRange();
+  const rangeVal = +$('range').value;
+  const bucket = rangeVal <= 3600 ? 'minute' : rangeVal <= 86400 ? 'hour' : 'day';
+  try {
+    const params = new URLSearchParams({bucket});
+    if (from) params.set('from', from);
+    const r = await fetch('/timeseries?' + params);
+    if (!r.ok) return;
+    const d = await r.json();
+    $('ts-loading').style.display = 'none';
+    $('ts-badge').textContent = `${d.buckets.length} ${bucket}s`;
+
+    const labels = d.buckets.map(b => {
+      const dt = new Date(b.ts * 1000);
+      if (bucket === 'day') return dt.toLocaleDateString('en-GB',{month:'short',day:'numeric'});
+      if (bucket === 'hour') return dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      return dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    });
+    const totals = d.buckets.map(b => b.total);
+    const errors = d.buckets.map(b => b.ERROR + b.FATAL);
+    const warns  = d.buckets.map(b => b.WARN);
+
+    if (chartTS) chartTS.destroy();
+    chartTS = new Chart($('chart-ts'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Total', data: totals, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,.1)',
+            fill:true, tension:.35, pointRadius:2, borderWidth:2 },
+          { label: 'Errors', data: errors, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.08)',
+            fill:true, tension:.35, pointRadius:2, borderWidth:2 },
+          { label: 'Warnings', data: warns, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,.08)',
+            fill:true, tension:.35, pointRadius:2, borderWidth:2 },
+        ]
+      },
+      options: mkLineOptions()
+    });
+
+    // Also update trend chart with same data
+    $('trend-loading').style.display = 'none';
+    $('trend-badge').textContent = `${d.buckets.reduce((s,b)=>s+b.ERROR+b.FATAL,0)} errors`;
+    if (chartTrend) chartTrend.destroy();
+    chartTrend = new Chart($('chart-trend'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Errors', data: errors, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.15)',
+            fill:true, tension:.35, pointRadius:2, borderWidth:2 },
+          { label: 'Warnings', data: warns, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,.1)',
+            fill:true, tension:.35, pointRadius:2, borderWidth:2 },
+        ]
+      },
+      options: mkLineOptions()
+    });
+  } catch(e) {
+    $('ts-loading').textContent = 'Failed to load';
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   SEARCH (powers cards + donut + svc bar + table)
+═══════════════════════════════════════════════ */
+let searchOffset = 0;
+
+async function runSearch(resetPage = true) {
+  if (resetPage) { curPage = 1; searchOffset = 0; }
+  const q = buildQuery();
+  const from = getRange();
+  const limit = +$('per-page').value;
+  const sort  = $('sort').value;
+
+  // Show loading
+  $('log-tbody').innerHTML = '<tr><td colspan="6" style="padding:0"><div class="loading-state"><div class="spinner"></div> Querying index…</div></td></tr>';
+
+  const params = new URLSearchParams({ q, limit, offset: searchOffset, sort });
+  if (from) params.set('from', from);
+
+  try {
+    const r = await fetch('/search?' + params);
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({error:'Request failed'}));
+      $('log-tbody').innerHTML = `<tr><td colspan="6" style="padding:0"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Error</div><div class="empty-sub">${esc(e.error||'Unknown error')}</div></div></td></tr>`;
+      return;
+    }
+    const d = await r.json();
+    lastQuery = q;
+    lastFacets = d.facets || {};
+    curTotal = d.total;
+
+    // Update stat cards from facets
+    const lf = d.facets?.level || {};
+    $('c-error').textContent = fmt((lf.ERROR||0)+(lf.FATAL||0));
+    $('c-warn').textContent  = fmt(lf.WARN||0);
+    $('c-info').textContent  = fmt((lf.INFO||0)+(lf.DEBUG||0));
+    $('c-total').textContent = fmt(d.total);
+    $('c-total-sub').textContent = `${d.segments_searched} segment(s) searched`;
+    $('c-speed').textContent = fmtMs(d.took_ms);
+    $('c-speed-sub').textContent = `${d.total} hits in ${d.took_ms}ms`;
+
+    // Explorer badge
+    $('explorer-badge').textContent = `${fmt(d.total)} result${d.total!==1?'s':''}`;
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(d.total / limit));
+    $('page-info').textContent = `Page ${curPage} of ${totalPages} · ${fmt(d.total)} results`;
+    $('btn-prev').disabled = curPage <= 1;
+    $('btn-next').disabled = curPage >= totalPages;
+
+    // Render table
+    renderTable(d.results);
+
+    // Update donut chart
+    updateDonut(lf);
+
+    // Update service bar chart
+    updateSvcChart(d.facets?.service || {});
+
+    // Update service filter dropdown
+    updateSvcFilter(d.facets?.service || {});
+
+    // Recent errors
+    loadRecentErrors();
+
+    // Top services
+    updateTopServices(d.facets?.service || {}, d.total);
+
+  } catch(e) {
+    $('log-tbody').innerHTML = `<tr><td colspan="6" style="padding:0"><div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-title">Cannot reach server</div><div class="empty-sub">Make sure the server is running</div></div></td></tr>`;
+    $('status-badge').className = 'status-badge err';
+    $('status-text').textContent = 'Disconnected';
+  }
+}
+
+function buildQuery() {
+  const qBase = $('q').value.trim();
+  const fLevel = $('f-level').value;
+  const fSvc   = $('f-service').value;
+  const parts = [];
+  if (qBase) parts.push(qBase);
+  if (fLevel && !qBase.includes('level:')) parts.push(fLevel);
+  if (fSvc && !qBase.includes('service:'))  parts.push(fSvc);
+  return parts.join(' ');
+}
+
+/* ═══════════════════════════════════════════════
+   TABLE RENDERING
+═══════════════════════════════════════════════ */
+function renderTable(results) {
+  if (!results.length) {
+    $('log-tbody').innerHTML = `<tr><td colspan="6" style="padding:0"><div class="empty-state">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">No logs match</div>
+      <div class="empty-sub">Try a different query, widen the time range, or start the agent:<br>
+        <code style="color:var(--accent);font-size:11px">python -m logagg.agent --generate</code>
+      </div></div></td></tr>`;
+    return;
+  }
+
+  $('log-tbody').innerHTML = results.map(e => {
+    const isExpanded = expandedRows.has(e.id);
+    const detailHtml = isExpanded ? renderDetail(e) : '';
+    return `<tr class="log-row${isExpanded?' expanded':''}" data-id="${e.id}" onclick="toggleRow(${e.id}, this)">
+      <td class="log-cell ts">${fmtTs(e.ts)}</td>
+      <td class="log-cell"><span class="level-pill level-${e.level}">${e.level}</span></td>
+      <td class="log-cell svc" title="${esc(e.service)}">${esc(e.service)}</td>
+      <td class="log-cell host">${esc(e.host||'—')}</td>
+      <td class="log-cell msg">${esc(e.message)}</td>
+      <td class="log-cell expand-btn">${isExpanded?'▲':'▼'}</td>
+    </tr>${detailHtml}`;
+  }).join('');
+}
+
+function renderDetail(e) {
+  const meta = JSON.stringify({id:e.id,ts:e.ts,time:e.time,score:e.score},null,2);
+  return `<tr class="detail-row" id="detail-${e.id}">
+    <td class="detail-cell" colspan="6">
+      <div class="detail-inner">
+        <span class="detail-key">Timestamp</span>
+        <span class="detail-val">${esc(e.time)}</span>
+        <span class="detail-key">ID</span>
+        <span class="detail-val">${e.id}</span>
+        <span class="detail-key">Service</span>
+        <span class="detail-val"><a href="#" onclick="setQ('service:${esc(e.service)}');return false">${esc(e.service)}</a></span>
+        <span class="detail-key">Level</span>
+        <span class="detail-val"><span class="level-pill level-${e.level}">${e.level}</span></span>
+        <span class="detail-key">Host</span>
+        <span class="detail-val">${esc(e.host||'—')}</span>
+        <span class="detail-key">Message</span>
+        <span class="detail-val">${esc(e.message)}</span>
+        <span class="detail-key">Metadata</span>
+        <pre class="detail-json">${esc(meta)}</pre>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function toggleRow(id, rowEl) {
+  if (expandedRows.has(id)) {
+    expandedRows.delete(id);
+    const det = document.getElementById('detail-' + id);
+    if (det) det.remove();
+    rowEl.classList.remove('expanded');
+    rowEl.querySelector('.expand-btn').textContent = '▼';
+  } else {
+    expandedRows.add(id);
+    rowEl.classList.add('expanded');
+    rowEl.querySelector('.expand-btn').textContent = '▲';
+    rowEl.insertAdjacentHTML('afterend', renderDetail({
+      id: +rowEl.dataset.id,
+      // reconstruct from cells — just re-search is simpler: inject via data attr
+      time: rowEl.cells[0].textContent,
+      ts: 0,
+      level: rowEl.cells[1].textContent.trim(),
+      service: rowEl.cells[2].textContent.trim(),
+      host: rowEl.cells[3].textContent.trim(),
+      message: rowEl.cells[4].textContent.trim(),
+      score: 0
+    }));
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   DONUT CHART
+═══════════════════════════════════════════════ */
+function updateDonut(levelFacet) {
+  $('donut-loading').style.display = 'none';
+  const levels = ['DEBUG','INFO','WARN','ERROR','FATAL'];
+  const data   = levels.map(l => levelFacet[l] || 0);
+  const total  = data.reduce((a,b)=>a+b,0);
+  $('donut-badge').textContent = fmt(total) + ' logs';
+
+  if (chartDonut) chartDonut.destroy();
+  chartDonut = new Chart($('chart-donut'), {
+    type: 'doughnut',
+    data: {
+      labels: levels,
+      datasets: [{ data, backgroundColor: levels.map(l=>LEVEL_COLORS[l]),
+        borderColor: '#161b22', borderWidth: 2, hoverOffset: 6 }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:true,
+      cutout: '62%',
+      plugins:{
+        legend:{position:'right',labels:{boxWidth:12,padding:12}},
+        tooltip:{backgroundColor:'#1c2230',borderColor:'#30363d',borderWidth:1,
+          titleColor:'#e6edf3',bodyColor:'#8b949e',padding:10,
+          callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.parsed)} (${total?((ctx.parsed/total)*100).toFixed(1):0}%)`}}
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════
+   SERVICE BAR CHART
+═══════════════════════════════════════════════ */
+function updateSvcChart(svcFacet) {
+  $('svc-loading').style.display = 'none';
+  const entries = Object.entries(svcFacet).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  $('svc-badge').textContent = `${entries.length} service(s)`;
+
+  if (chartSvc) chartSvc.destroy();
+  if (!entries.length) return;
+
+  const palette = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f0883e','#39d353','#79c0ff'];
+  chartSvc = new Chart($('chart-svc'), {
+    type: 'bar',
+    data: {
+      labels: entries.map(e=>e[0]),
+      datasets: [{ label:'Logs', data: entries.map(e=>e[1]),
+        backgroundColor: palette.map(c=>c+'cc'), borderColor: palette,
+        borderWidth:1, borderRadius:4 }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:true, indexAxis:'y',
+      plugins:{legend:{display:false},
+        tooltip:{backgroundColor:'#1c2230',borderColor:'#30363d',borderWidth:1,
+          titleColor:'#e6edf3',bodyColor:'#8b949e',padding:10}},
+      scales:{
+        x:{grid:{color:GRID_COLOR},ticks:{precision:0}},
+        y:{grid:{color:'transparent'}}
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════
+   TOP SERVICES PANEL
+═══════════════════════════════════════════════ */
+function updateTopServices(svcFacet, total) {
+  const entries = Object.entries(svcFacet).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  if (!entries.length) {
+    $('top-services-body').innerHTML = '<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-title">No services yet</div></div>';
+    return;
+  }
+  const max = entries[0]?.[1] || 1;
+  $('top-services-body').innerHTML = entries.map(([svc,count]) => `
+    <div class="svc-row">
+      <div class="svc-name" title="${esc(svc)}">${esc(svc)}</div>
+      <div class="svc-bar-wrap"><div class="svc-bar" style="width:${(count/max*100).toFixed(1)}%"></div></div>
+      <div class="svc-count">${fmt(count)}</div>
+    </div>`).join('');
+}
+
+/* ═══════════════════════════════════════════════
+   RECENT ERRORS PANEL
+═══════════════════════════════════════════════ */
+async function loadRecentErrors() {
+  const from = getRange();
+  const params = new URLSearchParams({q:'level:error OR level:fatal', limit:8, sort:'time'});
+  if (from) params.set('from', from);
+  try {
+    const r = await fetch('/search?' + params);
+    if (!r.ok) return;
+    const d = await r.json();
+    $('errors-badge').textContent = fmt(d.total);
+    if (!d.results.length) {
+      $('recent-errors-body').innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No recent errors</div><div class="empty-sub">System looks healthy</div></div>';
+      return;
+    }
+    $('recent-errors-body').innerHTML = d.results.map(e=>`
+      <div class="error-item">
+        <div class="error-dot"></div>
+        <div>
+          <div class="error-msg">${esc(e.message)}</div>
+          <div class="error-meta"><span class="level-pill level-${e.level}" style="margin-right:4px">${e.level}</span>
+            ${esc(e.service)} · ${fmtTs(e.ts)}</div>
+        </div>
+      </div>`).join('');
+  } catch {}
+}
+
+/* ═══════════════════════════════════════════════
+   SERVICE FILTER DROPDOWN
+═══════════════════════════════════════════════ */
+function updateSvcFilter(svcFacet) {
+  const sel = $('f-service');
+  const cur = sel.value;
+  const svcs = Object.keys(svcFacet).sort();
+  sel.innerHTML = '<option value="">All Services</option>' +
+    svcs.map(s=>`<option value="service:${esc(s)}"${cur===`service:${s}`?' selected':''}>${esc(s)}</option>`).join('');
+}
+
+/* ═══════════════════════════════════════════════
+   PAGINATION
+═══════════════════════════════════════════════ */
+function goPage(page) {
+  const limit = +$('per-page').value;
+  const totalPages = Math.max(1, Math.ceil(curTotal / limit));
+  curPage = Math.max(1, Math.min(page, totalPages));
+  searchOffset = (curPage - 1) * limit;
+  runSearch(false);
+}
+
+/* ═══════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════ */
+function setQ(val) {
+  $('q').value = val;
+  $('f-level').value = '';
+  $('f-service').value = '';
+  runSearch();
+}
+function applyFilter() { goPage(1); }
+function onRangeChange() { refresh(); }
+
+function refresh() {
+  runSearch();
+  loadStats();
+  loadTimeseries();
+  checkHealth();
+}
+
+/* ═══════════════════════════════════════════════
+   AUTO-REFRESH
+═══════════════════════════════════════════════ */
+function toggleAuto() {
+  autoRefresh = !autoRefresh;
+  const badge = $('auto-badge');
+  badge.style.display = autoRefresh ? '' : 'none';
+  if (autoRefresh) {
+    autoTimer = setInterval(refresh, 10000);
+    toast('Auto-refresh ON (10s)', 'success');
+  } else {
+    clearInterval(autoTimer);
+    toast('Auto-refresh OFF');
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   EVENT LISTENERS
+═══════════════════════════════════════════════ */
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+
+/* ═══════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════ */
+(async function init() {
+  await Promise.allSettled([
+    checkHealth(),
+    loadStats(),
+    runSearch(),
+    loadTimeseries(),
+  ]);
+  // Refresh stats card every 5s
+  setInterval(() => { loadStats(); checkHealth(); }, 5000);
+})();
+</script>
+</body>
+</html>

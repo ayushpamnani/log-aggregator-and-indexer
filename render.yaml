@@ -1,0 +1,27 @@
+# Render deployment configuration
+# https://render.com/docs/render-yaml
+
+services:
+  - type: web
+    name: log-aggregator-indexer
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m logagg --host 0.0.0.0 --port $PORT --data-dir /tmp/logagg-data --seed"
+    envVars:
+      - key: PORT
+        value: 10000          # Render assigns the actual port at runtime via $PORT
+      - key: LOGAGG_API_KEY
+        generateValue: true   # Render auto-generates a secret
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    healthCheckPath: /health
+    autoDeploy: true
+
+# NOTE ON STORAGE:
+# Render free-tier uses EPHEMERAL storage.
+# /tmp/logagg-data is wiped on every restart.
+# The --seed flag auto-seeds 500 synthetic logs on startup so the dashboard
+# is always populated for demonstration.
+#
+# For PERSISTENT storage on Render, upgrade to a paid plan and use a
+# Render Disk mounted at /data, then change data-dir to /data.

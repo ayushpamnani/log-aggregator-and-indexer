@@ -1,0 +1,5 @@
+# requirements.txt
+# logagg uses Python stdlib only — no third-party packages needed.
+# This file exists so Render/Heroku/CI detect this as a Python project.
+# For production, you may add gunicorn to handle SIGTERM gracefully:
+# gunicorn
